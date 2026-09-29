@@ -16,6 +16,7 @@ from mjlab.managers.event_manager import RecomputeLevel
 from mjlab.sim.randomization import expand_model_fields
 from mjlab.sim.sim_data import TorchArray, WarpBridge
 from mjlab.utils.nan_guard import NanGuard, NanGuardCfg
+from mjlab.utils.profiling import profiled
 
 if TYPE_CHECKING:
   from mjlab.entity.variants import VariantMetadata
@@ -469,6 +470,7 @@ class Simulation:
       ).clone()
     return self._default_model_fields[field]
 
+  @profiled
   def recompute_constants(self, level: RecomputeLevel) -> None:
     """Recompute derived model constants after domain randomization.
 
@@ -482,6 +484,7 @@ class Simulation:
     with wp.ScopedDevice(self.wp_device):
       fn(self._wp_model, self._wp_data)
 
+  @profiled
   def forward(self) -> None:
     with wp.ScopedDevice(self.wp_device):
       if self.use_cuda_graph and self.forward_graph is not None:
@@ -489,6 +492,7 @@ class Simulation:
       else:
         mjwarp.forward(self.wp_model, self.wp_data)
 
+  @profiled
   def step(self) -> None:
     with wp.ScopedDevice(self.wp_device):
       with self.nan_guard.watch(self.data):
@@ -497,6 +501,7 @@ class Simulation:
         else:
           mjwarp.step(self.wp_model, self.wp_data)
 
+  @profiled
   def reset(self, env_ids: torch.Tensor | None = None) -> None:
     with wp.ScopedDevice(self.wp_device):
       if env_ids is None:
@@ -519,6 +524,7 @@ class Simulation:
     self._sensor_context = ctx
     self.create_graph()
 
+  @profiled
   def sense(self) -> None:
     """Execute the sense pipeline: prepare -> graph -> finalize.
 

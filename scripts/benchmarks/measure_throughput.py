@@ -22,6 +22,7 @@ import mjlab.tasks  # noqa: F401 - registers tasks
 from mjlab.envs import ManagerBasedRlEnv
 from mjlab.tasks.registry import load_env_cfg
 from mjlab.tasks.tracking.mdp.commands import MotionCommandCfg
+from mjlab.utils.profiling import profiling
 
 
 @dataclass
@@ -35,6 +36,7 @@ class BenchmarkResult:
   physics_sps: float
   env_sps: float
   overhead_pct: float
+  profile_dir: str | None = None
 
   def __str__(self) -> str:
     return (
@@ -79,6 +81,41 @@ class ThroughputConfig:
   output_dir: Path | None = None
   """Output directory for JSON results. If None, results are only printed."""
 
+  profile: bool = False
+  """Collect PyTorch traces in separate passes after measuring throughput."""
+
+  profile_dir: Path | None = None
+  """Trace root. Defaults to <output_dir or benchmark_results>/profiles."""
+
+  profile_steps: int = 20
+  """Environment steps to record per trace (physics steps include decimation)."""
+
+  profile_warmup_steps: int = 5
+  """Profiler warmup steps before each capture."""
+
+  profile_record_shapes: bool = False
+  """Record tensor shapes in profiling data."""
+
+  profile_memory: bool = False
+  """Record PyTorch tensor memory allocations and deallocations."""
+
+  profile_with_stack: bool = False
+  """Record source locations for PyTorch operations."""
+
+  def __post_init__(self) -> None:
+    if self.num_envs <= 0 or self.num_steps <= 0:
+      raise ValueError("num_envs and num_steps must be positive")
+    if self.warmup_steps < 0:
+      raise ValueError("warmup_steps must be nonnegative")
+    if self.profile_steps <= 0 or self.profile_warmup_steps < 0:
+      raise ValueError("profile_steps must be positive and profile warmup nonnegative")
+
+
+def synchronize(device: str) -> None:
+  """Wait for work on the benchmark's device, including non-default CUDA devices."""
+  if torch.device(device).type == "cuda":
+    torch.cuda.synchronize(device)
+
 
 def measure_physics_sps(env: ManagerBasedRlEnv, num_steps: int) -> float:
   """Measure raw physics stepping in env steps per second.
@@ -89,13 +126,13 @@ def measure_physics_sps(env: ManagerBasedRlEnv, num_steps: int) -> float:
   decimation = env.cfg.decimation
   total_physics_steps = num_steps * decimation
 
-  torch.cuda.synchronize()
+  synchronize(env.device)
   start = time.perf_counter()
 
   for _ in range(total_physics_steps):
     env.sim.step()
 
-  torch.cuda.synchronize()
+  synchronize(env.device)
   elapsed = time.perf_counter() - start
 
   # Report in env steps/sec (not physics steps/sec) for fair comparison.
@@ -107,16 +144,86 @@ def measure_env_sps(env: ManagerBasedRlEnv, num_steps: int) -> float:
   action_dim = sum(env.action_manager.action_term_dim)
   action = torch.zeros(env.num_envs, action_dim, device=env.device)
 
-  torch.cuda.synchronize()
+  synchronize(env.device)
   start = time.perf_counter()
 
   for _ in range(num_steps):
     env.step(action)
 
-  torch.cuda.synchronize()
+  synchronize(env.device)
   elapsed = time.perf_counter() - start
 
   return (num_steps * env.num_envs) / elapsed
+
+
+def collect_profiles(env: ManagerBasedRlEnv, task: str, cfg: ThroughputConfig) -> Path:
+  """Export physics and environment traces without changing throughput timings."""
+  root = cfg.profile_dir or (cfg.output_dir or Path("benchmark_results")) / "profiles"
+  timestamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%S.%fZ")
+  output_dir = root / task / timestamp
+  output_dir.mkdir(parents=True, exist_ok=False)
+
+  activities = [torch.profiler.ProfilerActivity.CPU]
+  if torch.device(env.device).type == "cuda":
+    activities.append(torch.profiler.ProfilerActivity.CUDA)
+  action_dim = sum(env.action_manager.action_term_dim)
+  action = torch.zeros(env.num_envs, action_dim, device=env.device)
+
+  for phase in ("physics", "env"):
+    env.reset()
+    synchronize(env.device)
+    with (
+      torch.profiler.profile(
+        activities=activities,
+        schedule=torch.profiler.schedule(
+          wait=0,
+          warmup=cfg.profile_warmup_steps,
+          active=cfg.profile_steps,
+          repeat=1,
+        ),
+        record_shapes=cfg.profile_record_shapes,
+        profile_memory=cfg.profile_memory,
+        with_stack=cfg.profile_with_stack,
+      ) as profiler,
+      profiling(),
+    ):
+      profiler.add_metadata("task", task)
+      profiler.add_metadata("phase", phase)
+      profiler.add_metadata_json(
+        "benchmark",
+        json.dumps(
+          {
+            "num_envs": env.num_envs,
+            "decimation": env.cfg.decimation,
+            "profile_steps": cfg.profile_steps,
+            "device": env.device,
+          }
+        ),
+      )
+      for _ in range(cfg.profile_warmup_steps + cfg.profile_steps):
+        if phase == "physics":
+          with torch.profiler.record_function("benchmark/physics_step"):
+            for _ in range(env.cfg.decimation):
+              env.sim.step()
+        else:
+          with torch.profiler.record_function("benchmark/env_step"):
+            env.step(action)
+        profiler.step()
+      synchronize(env.device)
+
+    profiler.export_chrome_trace(str(output_dir / f"{phase}.trace.json"))
+    averages = profiler.key_averages(group_by_input_shape=cfg.profile_record_shapes)
+    sort_by = (
+      "self_cuda_time_total"
+      if torch.device(env.device).type == "cuda"
+      else "self_cpu_time_total"
+    )
+    (output_dir / f"{phase}.txt").write_text(
+      averages.table(sort_by=sort_by, row_limit=-1)
+    )
+
+  print(f"PyTorch profiles saved to {output_dir}")
+  return output_dir
 
 
 def benchmark_task(task: str, cfg: ThroughputConfig) -> BenchmarkResult:
@@ -136,36 +243,35 @@ def benchmark_task(task: str, cfg: ThroughputConfig) -> BenchmarkResult:
       motion_cmd.motion_file = str(Path(motion_dir) / "motion.npz")
 
   env = ManagerBasedRlEnv(cfg=env_cfg, device=cfg.device)
-  env.reset()
+  try:
+    env.reset()
 
-  # Warmup.
-  action_dim = sum(env.action_manager.action_term_dim)
-  action = torch.zeros(env.num_envs, action_dim, device=env.device)
-  for _ in range(cfg.warmup_steps):
-    env.step(action)
-  torch.cuda.synchronize()
+    # Warmup.
+    action_dim = sum(env.action_manager.action_term_dim)
+    action = torch.zeros(env.num_envs, action_dim, device=env.device)
+    for _ in range(cfg.warmup_steps):
+      env.step(action)
+    synchronize(env.device)
 
-  decimation = env.cfg.decimation
-  physics_sps = measure_physics_sps(env, cfg.num_steps)
+    physics_sps = measure_physics_sps(env, cfg.num_steps)
 
-  env.reset()
-  torch.cuda.synchronize()
+    env.reset()
+    synchronize(env.device)
+    env_sps = measure_env_sps(env, cfg.num_steps)
 
-  env_sps = measure_env_sps(env, cfg.num_steps)
-
-  overhead_pct = 100 * (1 - env_sps / physics_sps)
-
-  env.close()
-
-  return BenchmarkResult(
-    task=task,
-    num_envs=cfg.num_envs,
-    num_steps=cfg.num_steps,
-    decimation=decimation,
-    physics_sps=physics_sps,
-    env_sps=env_sps,
-    overhead_pct=overhead_pct,
-  )
+    profile_dir = collect_profiles(env, task, cfg) if cfg.profile else None
+    return BenchmarkResult(
+      task=task,
+      num_envs=cfg.num_envs,
+      num_steps=cfg.num_steps,
+      decimation=env.cfg.decimation,
+      physics_sps=physics_sps,
+      env_sps=env_sps,
+      overhead_pct=100 * (1 - env_sps / physics_sps),
+      profile_dir=str(profile_dir) if profile_dir is not None else None,
+    )
+  finally:
+    env.close()
 
 
 def get_git_commit() -> str:

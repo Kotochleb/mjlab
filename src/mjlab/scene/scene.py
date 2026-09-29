@@ -16,6 +16,7 @@ from mjlab.sensor import BuiltinSensor, RayCastSensor, Sensor, SensorCfg
 from mjlab.sensor.camera_sensor import CameraSensor
 from mjlab.sensor.sensor_context import SensorContext
 from mjlab.terrains.terrain_entity import TerrainEntity, TerrainEntityCfg
+from mjlab.utils.profiling import profile_scope, profiled
 from mjlab.utils.spec import export_spec, non_default_option_fields
 
 _SCENE_XML = Path(__file__).parent / "scene.xml"
@@ -187,21 +188,27 @@ class Scene:
         device=self._device,
       )
 
+  @profiled
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
     for ent in self._entities.values():
       ent.reset(env_ids)
     for sensor in self._sensors.values():
       sensor.reset(env_ids)
 
+  @profiled
   def update(self, dt: float) -> None:
-    for ent in self._entities.values():
-      ent.update(dt)
-    for sensor in self._sensors.values():
-      sensor.update(dt)
+    for name, ent in self._entities.items():
+      with profile_scope("Scene.update", name):
+        ent.update(dt)
+    for name, sensor in self._sensors.items():
+      with profile_scope("Scene.update", name):
+        sensor.update(dt)
 
+  @profiled
   def write_data_to_sim(self) -> None:
-    for ent in self._entities.values():
-      ent.write_data_to_sim()
+    for name, ent in self._entities.items():
+      with profile_scope("Scene.write_data_to_sim", name):
+        ent.write_data_to_sim()
 
   # Private methods.
 

@@ -11,6 +11,8 @@ import mujoco_warp as mjwarp
 import torch
 import warp as wp
 
+from mjlab.utils.profiling import profiled
+
 if TYPE_CHECKING:
   from mjlab.sensor.camera_sensor import CameraSensor
   from mjlab.sensor.raycast_sensor import RayCastSensor
@@ -110,11 +112,13 @@ class SensorContext:
       self._disable_precomputed_rays = bool(expanded_fields & _RAY_FIELDS)
     self._create_context(mj_model)
 
+  @profiled
   def prepare(self) -> None:
     """Pre-graph: transform rays to world frame."""
     for sensor in self.raycast_sensors:
       sensor.prepare_rays()
 
+  @profiled
   def finalize(self) -> None:
     """Post-graph: compute raycast hit positions."""
     for sensor in self.raycast_sensors:

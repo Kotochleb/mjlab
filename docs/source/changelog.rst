@@ -5,6 +5,14 @@ Changelog
 Upcoming version (not yet released)
 -----------------------------------
 
+Added
+^^^^^
+
+- Added optional PyTorch profiling to ``measure_throughput.py``, with separate
+  physics and environment traces, operator summaries, and named ranges for
+  simulation, managers, scene updates, actuators, and sensors. Profiling runs
+  separately from throughput measurements.
+
 Changed
 ^^^^^^^
 

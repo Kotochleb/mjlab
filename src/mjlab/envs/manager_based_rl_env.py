@@ -41,6 +41,7 @@ from mjlab.sim import SimulationCfg
 from mjlab.sim.sim import Simulation
 from mjlab.utils import random as random_utils
 from mjlab.utils.logging import print_info
+from mjlab.utils.profiling import profiled
 from mjlab.utils.spaces import Box
 from mjlab.utils.spaces import Dict as DictSpace
 from mjlab.viewer.debug_visualizer import DebugVisualizer
@@ -355,6 +356,7 @@ class ManagerBasedRlEnv:
     if "startup" in self.event_manager.available_modes:
       self.event_manager.apply(mode="startup")
 
+  @profiled
   def reset(
     self,
     *,
@@ -383,6 +385,7 @@ class ManagerBasedRlEnv:
     self.recorder_manager.record_post_reset(env_ids)
     return self.obs_buf, self.extras
 
+  @profiled
   def step(self, action: torch.Tensor) -> types.VecEnvStepReturn:
     """Run one environment step: apply actions, simulate, compute RL signals.
 
@@ -577,6 +580,7 @@ class ManagerBasedRlEnv:
     self.observation_space = batch_space(self.single_observation_space, self.num_envs)
     self.action_space = batch_space(self.single_action_space, self.num_envs)
 
+  @profiled
   def _reset_idx(self, env_ids: torch.Tensor | None = None) -> None:
     self.curriculum_manager.compute(env_ids=env_ids)
     self.sim.reset(env_ids)

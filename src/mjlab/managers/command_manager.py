@@ -12,6 +12,7 @@ import torch
 from prettytable import PrettyTable
 
 from mjlab.managers.manager_base import ManagerBase, ManagerTermBase
+from mjlab.utils.profiling import profile_scope, profiled
 
 if TYPE_CHECKING:
   import viser
@@ -276,6 +277,7 @@ class CommandManager(ManagerBase):
       idx += term.command.shape[1]
     return terms
 
+  @profiled
   def reset(self, env_ids: torch.Tensor | None) -> dict[str, torch.Tensor]:
     extras = {}
     for name, term in self._terms.items():
@@ -284,9 +286,11 @@ class CommandManager(ManagerBase):
         extras[f"Metrics/{name}/{metric_name}"] = metric_value
     return extras
 
+  @profiled
   def compute(self, dt: float | torch.Tensor, env_ids: torch.Tensor | None = None):
-    for term in self._terms.values():
-      term.compute(dt, env_ids)
+    for name, term in self._terms.items():
+      with profile_scope("CommandManager.compute", name):
+        term.compute(dt, env_ids)
 
   def get_command(self, name: str) -> torch.Tensor:
     return self._terms[name].command

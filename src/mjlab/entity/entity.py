@@ -18,6 +18,7 @@ from mjlab.entity.data import EntityData
 from mjlab.utils import spec_config as spec_cfg
 from mjlab.utils.lab_api.string import resolve_matching_names
 from mjlab.utils.mujoco import dof_width, qpos_width
+from mjlab.utils.profiling import profile_scope, profiled
 from mjlab.utils.spec import auto_wrap_fixed_base_mocap
 from mjlab.utils.string import resolve_expr
 from mjlab.utils.xml import fix_spec_xml, strip_buffer_textures
@@ -859,6 +860,7 @@ class Entity:
       encoder_bias=encoder_bias,
     )
 
+  @profiled
   def update(self, dt: float) -> None:
     """Advance actuator internal state by one physics substep.
 
@@ -867,6 +869,7 @@ class Entity:
     for act in self._actuators:
       act.update(dt)
 
+  @profiled
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> None:
     """Zero actuator targets and reset actuator internal state.
 
@@ -887,6 +890,7 @@ class Entity:
     )
     self.reset(env_ids)
 
+  @profiled
   def write_data_to_sim(self) -> None:
     """Convert actuator targets into low-level controls and write them to the sim.
 
@@ -1333,9 +1337,12 @@ class Entity:
     )
 
   def _apply_actuator_controls(self) -> None:
-    self._builtin_group.apply_controls(self._data)
-    self._fused_actuator_group.apply_controls(self._data)
+    with profile_scope("Entity.actuators", "builtin"):
+      self._builtin_group.apply_controls(self._data)
+    with profile_scope("Entity.actuators", "fused"):
+      self._fused_actuator_group.apply_controls(self._data)
     for act in self._custom_actuators:
-      command = act.get_command(self._data)
-      command = act.apply_delay(command)
-      self._data.write_ctrl(act.compute(command), act.ctrl_ids)
+      with profile_scope("Entity.actuators", type(act).__name__):
+        command = act.get_command(self._data)
+        command = act.apply_delay(command)
+        self._data.write_ctrl(act.compute(command), act.ctrl_ids)

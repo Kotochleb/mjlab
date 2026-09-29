@@ -10,6 +10,7 @@ import torch
 from prettytable import PrettyTable
 
 from mjlab.managers.manager_base import ManagerBase, ManagerTermBaseCfg
+from mjlab.utils.profiling import profile_scope, profiled
 
 if TYPE_CHECKING:
   from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnv
@@ -97,6 +98,7 @@ class RewardManager(ManagerBase):
 
   # Methods.
 
+  @profiled
   def reset(
     self, env_ids: torch.Tensor | slice | None = None
   ) -> dict[str, torch.Tensor]:
@@ -113,6 +115,7 @@ class RewardManager(ManagerBase):
       term_cfg.func.reset(env_ids=env_ids)
     return extras
 
+  @profiled
   def compute(self, dt: float) -> torch.Tensor:
     self._reward_buf[:] = 0.0
     scale = dt if self._scale_by_dt else 1.0
@@ -122,7 +125,8 @@ class RewardManager(ManagerBase):
       if term_cfg.weight == 0.0:
         self._step_reward[:, term_idx] = 0.0
         continue
-      value = term_cfg.func(self._env, **term_cfg.params)
+      with profile_scope("RewardManager.compute", name):
+        value = term_cfg.func(self._env, **term_cfg.params)
       self._check_term_shape(name, value)
       value = value * term_cfg.weight * scale
       # NaN/Inf can occur from corrupted physics state; zero them to avoid policy crash.

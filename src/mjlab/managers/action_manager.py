@@ -10,6 +10,7 @@ import torch
 from prettytable import PrettyTable
 
 from mjlab.managers.manager_base import ManagerBase, ManagerTermBase
+from mjlab.utils.profiling import profile_scope, profiled
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -137,6 +138,7 @@ class ActionManager(ManagerBase):
   def get_term(self, name: str) -> ActionTerm:
     return self._terms[name]
 
+  @profiled
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> dict[str, float]:
     if env_ids is None:
       env_ids = slice(None)
@@ -149,6 +151,7 @@ class ActionManager(ManagerBase):
       term.reset(env_ids=env_ids)
     return {}
 
+  @profiled
   def process_action(self, action: torch.Tensor) -> None:
     """Store the raw policy output and route slices to each action term.
 
@@ -169,19 +172,22 @@ class ActionManager(ManagerBase):
     self._action[:] = action.to(self.device)
     # Split the flat action vector and route each slice to its term.
     idx = 0
-    for term in self._terms.values():
+    for name, term in self._terms.items():
       term_actions = action[:, idx : idx + term.action_dim]
-      term.process_actions(term_actions)
+      with profile_scope("ActionManager.process_action", name):
+        term.process_actions(term_actions)
       idx += term.action_dim
 
+  @profiled
   def apply_action(self) -> None:
     """Write processed actions to entity actuator targets.
 
     Called on every decimation substep (physics step), not just once per policy
     step. Each term writes its most recently processed targets to the simulation.
     """
-    for term in self._terms.values():
-      term.apply_actions()
+    for name, term in self._terms.items():
+      with profile_scope("ActionManager.apply_action", name):
+        term.apply_actions()
 
   def get_active_iterable_terms(
     self, env_idx: int

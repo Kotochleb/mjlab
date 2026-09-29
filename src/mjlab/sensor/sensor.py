@@ -10,6 +10,8 @@ import mujoco
 import mujoco_warp as mjwarp
 import torch
 
+from mjlab.utils.profiling import profile_scope
+
 if TYPE_CHECKING:
   from mjlab.entity import Entity
   from mjlab.viewer.debug_visualizer import DebugVisualizer
@@ -105,7 +107,8 @@ class Sensor(ABC, Generic[T]):
       The sensor data in the format specified by type parameter T.
     """
     if not self._cache_valid:
-      self._cached_data = self._compute_data()
+      with profile_scope(type(self).__name__, "compute_data"):
+        self._cached_data = self._compute_data()
       self._cache_valid = True
     assert self._cached_data is not None
     return self._cached_data

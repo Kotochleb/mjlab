@@ -10,6 +10,7 @@ import torch
 from prettytable import PrettyTable
 
 from mjlab.managers.manager_base import ManagerBase, ManagerTermBaseCfg
+from mjlab.utils.profiling import profile_scope, profiled
 
 if TYPE_CHECKING:
   from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnv
@@ -92,6 +93,7 @@ class CurriculumManager(ManagerBase):
         terms.append((term_name, data))
     return terms
 
+  @profiled
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> dict[str, float]:
     extras = {}
     for term_name, term_state in self._curriculum_state.items():
@@ -109,11 +111,13 @@ class CurriculumManager(ManagerBase):
       term_cfg.func.reset(env_ids=env_ids)
     return extras
 
+  @profiled
   def compute(self, env_ids: torch.Tensor | slice | None = None):
     if env_ids is None:
       env_ids = slice(None)
     for name, term_cfg in zip(self._term_names, self._term_cfgs, strict=False):
-      state = term_cfg.func(self._env, env_ids, **term_cfg.params)
+      with profile_scope("CurriculumManager.compute", name):
+        state = term_cfg.func(self._env, env_ids, **term_cfg.params)
       self._curriculum_state[name] = state
 
   def _prepare_terms(self):

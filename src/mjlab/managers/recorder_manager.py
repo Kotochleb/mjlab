@@ -10,6 +10,7 @@ import torch
 from prettytable import PrettyTable
 
 from mjlab.managers.manager_base import ManagerBase, ManagerTermBase, ManagerTermBaseCfg
+from mjlab.utils.profiling import profiled
 
 if TYPE_CHECKING:
   from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnv
@@ -189,16 +190,19 @@ class RecorderManager(ManagerBase):
       msg = f"No recorder term named '{name}'. Active terms: {self.active_terms}"
       raise KeyError(msg) from None
 
+  @profiled
   def record_pre_reset(self, env_ids: torch.Tensor) -> None:
     """Forward to each term's :meth:`RecorderTerm.record_pre_reset`."""
     for term in self._terms.values():
       term.record_pre_reset(env_ids)
 
+  @profiled
   def record_post_reset(self, env_ids: torch.Tensor) -> None:
     """Forward to each term's :meth:`RecorderTerm.record_post_reset`."""
     for term in self._terms.values():
       term.record_post_reset(env_ids)
 
+  @profiled
   def record_post_step(self) -> None:
     """Forward to each term's :meth:`RecorderTerm.record_post_step`."""
     for term in self._terms.values():

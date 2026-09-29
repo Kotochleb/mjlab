@@ -10,6 +10,7 @@ import torch
 from prettytable import PrettyTable
 
 from mjlab.managers.manager_base import ManagerBase, ManagerTermBaseCfg
+from mjlab.utils.profiling import profile_scope, profiled
 
 if TYPE_CHECKING:
   from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnv
@@ -85,6 +86,7 @@ class TerminationManager(ManagerBase):
 
   # Methods.
 
+  @profiled
   def reset(
     self, env_ids: torch.Tensor | slice | None = None
   ) -> dict[str, torch.Tensor]:
@@ -99,11 +101,13 @@ class TerminationManager(ManagerBase):
       term_cfg.func.reset(env_ids=env_ids)
     return extras
 
+  @profiled
   def compute(self) -> torch.Tensor:
     self._truncated_buf[:] = False
     self._terminated_buf[:] = False
     for name, term_cfg in zip(self._term_names, self._term_cfgs, strict=False):
-      value = term_cfg.func(self._env, **term_cfg.params)
+      with profile_scope("TerminationManager.compute", name):
+        value = term_cfg.func(self._env, **term_cfg.params)
       self._check_term_shape(name, value)
       if term_cfg.time_out:
         self._truncated_buf |= value

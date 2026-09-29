@@ -12,6 +12,7 @@ from mjlab.managers.manager_base import ManagerBase, ManagerTermBaseCfg
 from mjlab.utils.buffers import CircularBuffer, DelayBuffer
 from mjlab.utils.noise import noise_cfg, noise_model
 from mjlab.utils.noise.noise_cfg import NoiseCfg, NoiseModelCfg
+from mjlab.utils.profiling import profile_scope, profiled
 
 
 @dataclass
@@ -236,6 +237,7 @@ class ObservationManager(ManagerBase):
     index = self._group_obs_term_names[group_name].index(term_name)
     return self._group_obs_term_cfgs[group_name][index]
 
+  @profiled
   def reset(self, env_ids: torch.Tensor | slice | None = None) -> dict[str, float]:
     # Invalidate cache since reset envs will have different observations.
     self._obs_buffer = None
@@ -302,6 +304,7 @@ class ObservationManager(ManagerBase):
     # Sanitize (applies to both "warn" and "sanitize" policies).
     return torch.nan_to_num(tensor, nan=0.0, posinf=0.0, neginf=0.0)
 
+  @profiled
   def compute(
     self,
     update_history: bool = False,
@@ -326,10 +329,12 @@ class ObservationManager(ManagerBase):
 
     obs_buffer: dict[str, torch.Tensor | dict[str, torch.Tensor]] = dict()
     for group_name in self._group_obs_term_names:
-      obs_buffer[group_name] = self.compute_group(group_name, update_history, env_ids)
+      with profile_scope("ObservationManager.group", group_name):
+        obs_buffer[group_name] = self.compute_group(group_name, update_history, env_ids)
     self._obs_buffer = obs_buffer
     return obs_buffer
 
+  @profiled
   def compute_group(
     self,
     group_name: str,
@@ -343,7 +348,8 @@ class ObservationManager(ManagerBase):
       group_term_names, self._group_obs_term_cfgs[group_name], strict=False
     )
     for term_name, term_cfg in obs_terms:
-      obs: torch.Tensor = term_cfg.func(self._env, **term_cfg.params).clone()
+      with profile_scope("ObservationManager.term", group_name, term_name):
+        obs: torch.Tensor = term_cfg.func(self._env, **term_cfg.params).clone()
       if isinstance(term_cfg.noise, noise_cfg.NoiseCfg):
         obs = term_cfg.noise.apply(obs)
       elif isinstance(term_cfg.noise, noise_cfg.NoiseModelCfg):

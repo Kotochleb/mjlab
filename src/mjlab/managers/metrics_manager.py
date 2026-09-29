@@ -10,6 +10,7 @@ import torch
 from prettytable import PrettyTable
 
 from mjlab.managers.manager_base import ManagerBase, ManagerTermBaseCfg
+from mjlab.utils.profiling import profile_scope, profiled
 
 if TYPE_CHECKING:
   from mjlab.envs.manager_based_rl_env import ManagerBasedRlEnv
@@ -119,6 +120,7 @@ class MetricsManager(ManagerBase):
 
   # Methods.
 
+  @profiled
   def reset(
     self, env_ids: torch.Tensor | slice | None = None
   ) -> dict[str, torch.Tensor]:
@@ -156,6 +158,7 @@ class MetricsManager(ManagerBase):
 
     return extras
 
+  @profiled
   def compute_substep(self) -> None:
     """Accumulate per-substep metric values inside the decimation loop.
 
@@ -168,6 +171,7 @@ class MetricsManager(ManagerBase):
       self._substep_accum[i] += value
     self._substep_count += 1
 
+  @profiled
   def compute(self) -> None:
     self._step_count += 1
     if self._substep_term_indices and self._substep_count > 0:
@@ -216,7 +220,8 @@ class MetricsManager(ManagerBase):
   def _compute_term(self, idx: int) -> torch.Tensor:
     name = self._term_names[idx]
     term_cfg = self._term_cfgs[idx]
-    value = term_cfg.func(self._env, **term_cfg.params)
+    with profile_scope("MetricsManager.compute_term", name):
+      value = term_cfg.func(self._env, **term_cfg.params)
     self._check_term_shape(name, value)
     return value
 

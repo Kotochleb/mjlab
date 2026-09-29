@@ -12,6 +12,7 @@ import torch
 from prettytable import PrettyTable
 
 from mjlab.managers.manager_base import ManagerBase, ManagerTermBaseCfg
+from mjlab.utils.profiling import profile_scope, profiled
 
 if TYPE_CHECKING:
   from mjlab.envs import ManagerBasedRlEnv
@@ -214,6 +215,7 @@ class EventManager(ManagerBase):
         return self._mode_term_cfgs[mode][index]
     raise ValueError(f"Event term '{term_name}' not found in active terms.")
 
+  @profiled
   def reset(self, env_ids: torch.Tensor | None = None):
     for mode_cfg in self._mode_class_term_cfgs.values():
       for term_cfg in mode_cfg:
@@ -237,6 +239,7 @@ class EventManager(ManagerBase):
           self._interval_term_time_left[index][ids] = sampled_interval
     return {}
 
+  @profiled
   def apply(
     self,
     mode: EventMode,
@@ -276,7 +279,10 @@ class EventManager(ManagerBase):
             lower, upper = term_cfg.interval_range_s
             sampled_interval = torch.rand(1) * (upper - lower) + lower
             self._interval_term_time_left[index][:] = sampled_interval
-            term_cfg.func(self._env, None, **term_cfg.params)
+            with profile_scope(
+              "EventManager.term", mode, self._mode_term_names[mode][index]
+            ):
+              term_cfg.func(self._env, None, **term_cfg.params)
             fired = True
         else:
           valid_env_ids = (time_left < 1e-6).nonzero().flatten()
@@ -288,10 +294,16 @@ class EventManager(ManagerBase):
               + lower
             )
             self._interval_term_time_left[index][valid_env_ids] = sampled_time
-            term_cfg.func(self._env, valid_env_ids, **term_cfg.params)
+            with profile_scope(
+              "EventManager.term", mode, self._mode_term_names[mode][index]
+            ):
+              term_cfg.func(self._env, valid_env_ids, **term_cfg.params)
             fired = True
       elif mode == "step":
-        term_cfg.func(self._env, None, **term_cfg.params)
+        with profile_scope(
+          "EventManager.term", mode, self._mode_term_names[mode][index]
+        ):
+          term_cfg.func(self._env, None, **term_cfg.params)
         fired = True
       elif mode == "reset":
         assert global_env_step_count is not None
@@ -306,7 +318,10 @@ class EventManager(ManagerBase):
             global_env_step_count
           )
           self._reset_term_last_triggered_once[index][env_ids] = True
-          term_cfg.func(self._env, env_ids, **term_cfg.params)
+          with profile_scope(
+            "EventManager.term", mode, self._mode_term_names[mode][index]
+          ):
+            term_cfg.func(self._env, env_ids, **term_cfg.params)
           fired = True
         else:
           last_triggered_step = self._reset_term_last_triggered_step_id[index][env_ids]
@@ -323,10 +338,16 @@ class EventManager(ManagerBase):
             self._reset_term_last_triggered_step_id[index][valid_env_ids] = (
               global_env_step_count
             )
-            term_cfg.func(self._env, valid_env_ids, **term_cfg.params)
+            with profile_scope(
+              "EventManager.term", mode, self._mode_term_names[mode][index]
+            ):
+              term_cfg.func(self._env, valid_env_ids, **term_cfg.params)
             fired = True
       else:
-        term_cfg.func(self._env, env_ids, **term_cfg.params)
+        with profile_scope(
+          "EventManager.term", mode, self._mode_term_names[mode][index]
+        ):
+          term_cfg.func(self._env, env_ids, **term_cfg.params)
         fired = True
 
       if fired:

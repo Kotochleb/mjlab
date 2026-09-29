@@ -48,6 +48,53 @@ uv run python scripts/benchmarks/measure_throughput.py \
   --output-dir benchmark_results
 ```
 
+### Collect PyTorch profiles
+
+```bash
+uv run scripts/benchmarks/measure_throughput.py \
+  --tasks "['Mjlab-Velocity-Flat-Unitree-Go1']" \
+  --num-envs 4096 \
+  --output-dir benchmark_results \
+  --profile True \
+  --profile-steps 20 \
+  --profile-warmup-steps 5
+```
+
+Throughput is measured first with profiling disabled. Two additional passes then
+record raw physics stepping and full environment stepping. Each profiler step
+represents one environment step; the physics pass runs `decimation` simulation
+steps per profiler step. Initialization, environment resets before each pass, and
+profiler warmup are excluded from the traces. Automatic resets during environment
+stepping are included.
+
+Each task writes `physics.trace.json`, `env.trace.json`, `physics.txt`, and `env.txt`
+under `benchmark_results/profiles/<task>/<timestamp>/`. The text files contain
+operator timing summaries. Open the JSON traces in [Perfetto](https://ui.perfetto.dev/)
+or Chrome's tracing viewer. The trace directory is also recorded in the throughput
+JSON results. Use `--profile-dir PATH` to choose a different trace root. Without
+`--output-dir`, traces still default to `benchmark_results/profiles/`.
+
+Optional `--profile-record-shapes True`, `--profile-memory True`, and
+`--profile-with-stack True` flags enable additional PyTorch data collection.
+These can increase profiling overhead and trace size. Memory tracking covers
+PyTorch allocations but does not account for all MuJoCo/Warp allocations.
+CPU activity is always recorded; CUDA runs also request CUDA activity. CUDA graph
+replays remain enabled, so Warp physics appears under simulation ranges and graph
+launches; detailed GPU kernel visibility depends on PyTorch/CUPTI support. The
+benchmark also accepts `--device cpu` for CPU traces.
+
+The `mjlab/` ranges identify environment, simulation, scene, entity, manager, term,
+actuator, and sensor work. To include these ranges in a custom profiling loop:
+
+```python
+import torch
+from mjlab.utils.profiling import profiling
+
+with torch.profiler.profile() as profiler, profiling():
+  env.step(action)
+profiler.export_chrome_trace("env.trace.json")
+```
+
 ## Configuration
 
 Environment variables for `nightly_train.sh`:
